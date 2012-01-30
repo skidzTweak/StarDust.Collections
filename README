@@ -1,0 +1,15 @@
+==================================
+====== Stardust Collectors =======
+==================================
+
+Stardust collector is a module for aurora that will collect the many fees.
+* Classifieds - collects the fees monthly
+more to come
+
+--------------------------
+---- How to Install ------
+--------------------------
+Copy the "addon-modules" folder to your Aurora Directory
+No ini files just yet.
+
+It does require stardust to work right now.
