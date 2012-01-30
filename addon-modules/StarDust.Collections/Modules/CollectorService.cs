@@ -100,8 +100,18 @@ namespace StarDust.Collections
                     keepGoing = true;
                     if (m_scheduler.Exist(data.classifiedID.ToString())) continue;
                     OSDMap temper = new OSDMap { { "CLASSBILL", OSD.FromUUID(data.classifiedID) } };
+                    DateTime tempdt = UnixTimeStampToDateTime((int) data.creationDate);
+                    bool keepGoing2 = false;
+                    do
+                    {
+                        keepGoing2 = false;
+                        tempdt = tempdt.AddMonths(1);
+                        if (tempdt < DateTime.UtcNow)
+                            keepGoing2 = true;
+                    } while (keepGoing2);
+                    
                     SchedulerItem si = new SchedulerItem("CLASSBILL", temper.ToString(), true,
-                                                         new TimeSpan(0, 0, Util.ToUnixTime(UnixTimeStampToDateTime((int)data.expirationDate).AddMonths(1)) - Util.ToUnixTime(DateTime.UtcNow)));
+                                                         new TimeSpan(0, 0, Util.ToUnixTime(tempdt) - Util.ToUnixTime(DateTime.UtcNow)));
                     m_scheduler.Save(si);
                 }
             } while (keepGoing);
