@@ -18,7 +18,6 @@ namespace StarDust.Collections
     public class CollectorService : ConnectorBase, IStarDustCollector, IService
     {
         private bool m_enabled;
-        private IStarDustCollectorConnector m_database;
         private readonly Timer taskTimer = new Timer();
         IScheduleService m_scheduler;
         private IMoneyModule m_money;
@@ -37,7 +36,6 @@ namespace StarDust.Collections
         {
             m_scheduler = registry.RequestModuleInterface<IScheduleService>();
             m_money = registry.RequestModuleInterface<IMoneyModule>();
-            m_database = DataManager.RequestPlugin<IStarDustCollectorConnector>();
             taskTimer.Interval = 120000;
             taskTimer.Elapsed += t_Elapsed;
             taskTimer.Enabled = m_enabled;
@@ -45,84 +43,88 @@ namespace StarDust.Collections
             m_scheduler.Register("CLASSBILL", Classified_Billing);
         }
 
+        public void FinishedStartup()
+        {
+            
+        }
+
+        #endregion
+
+        #region Billing Events
+
         private object Classified_Billing(string functionName, object parameters)
         {
             try
             {
-                OSDMap parms = (OSDMap)parameters;
+                BillingClassified bc = new BillingClassified();
+                bc.FromOSD((OSDMap)OSDParser.DeserializeJson(parameters.ToString()));
                 IDirectoryServiceConnector DSC = DataManager.RequestPlugin<IDirectoryServiceConnector>();
-                Classified c = DSC.GetClassifiedByID(parms["CLASSBILL"].AsUUID());
+                Classified c = DSC.GetClassifiedByID(bc.ClassifiedID);
                 if (c != null)
                 {
-                    if (m_money != null)
+                    if (((c.ClassifiedFlags & (byte)DirectoryManager.ClassifiedFlags.Enabled) == (byte)DirectoryManager.ClassifiedFlags.Enabled) && (m_money != null))
                     {
-                        m_money.Charge(c.CreatorUUID, c.PriceForListing, "Classified Charge -" + c.Name);
-                        m_scheduler.Remove(c.CreatorUUID.ToString());
-                        OSDMap temper = new OSDMap { { "CLASSBILL", OSD.FromUUID(c.ClassifiedUUID) } };
-                        SchedulerItem si = new SchedulerItem("CLASSBILL", temper.ToString(), true,
-                                                             new TimeSpan(0, 0, Util.ToUnixTime(DateTime.UtcNow.AddMonths(1)) - Util.ToUnixTime(DateTime.UtcNow)));
-                        m_scheduler.Save(si);
+                        if (!m_money.Charge(c.CreatorUUID, c.PriceForListing, "Classified Charge -" + c.Name))
+                        {
+                            c.ClassifiedFlags = (byte)(c.ClassifiedFlags & ~((int)DirectoryManager.ClassifiedFlags.Enabled));
+                            IProfileConnector profile = DataManager.RequestPlugin<IProfileConnector>("IProfileConnector");
+                            profile.AddClassified(c);
+                            m_scheduler.Remove(bc.ClassifiedID.ToString());
+                        }
                     }
                     else
-                    {
                         MainConsole.Instance.Info("[CollectorService] Could not find money module.");
-                    }
                 }
                 else
-                {
                     MainConsole.Instance.Info("[CollectorService] Could not find classified, might have been deleted");
-                }
             }
             catch (Exception ex)
             {
-                MainConsole.Instance.Error("[CollectorService] Error charging for classifieds");
+                MainConsole.Instance.Error("[CollectorService] Error charging for classifieds", ex);
             }
-            
+
             return "";
         }
+
+        #endregion
+
+        #region Timer
 
         private void t_Elapsed(object sender, ElapsedEventArgs e)
         {
             taskTimer.Enabled = false;
-            SchedulerItem temp = new SchedulerItem();
             IDirectoryServiceConnector DSC = DataManager.RequestPlugin<IDirectoryServiceConnector>();
 
             int startAT = 0;
-            bool keepGoing = true;
+            bool keepGoing;
             do
             {
                 keepGoing = false;
                 List<DirClassifiedReplyData> classifieds = DSC.FindClassifieds("", ((int)DirectoryManager.ClassifiedCategories.Any).ToString(CultureInfo.InvariantCulture),
                                 (uint)DirectoryManager.ClassifiedFlags.Enabled, startAT);
                 startAT += classifieds.Count;
+                if (classifieds.Count >= 1) keepGoing = true;
+#if(!ISWIN)
                 foreach (DirClassifiedReplyData data in classifieds)
                 {
-                    keepGoing = true;
                     if (m_scheduler.Exist(data.classifiedID.ToString())) continue;
-                    OSDMap temper = new OSDMap { { "CLASSBILL", OSD.FromUUID(data.classifiedID) } };
-                    DateTime tempdt = UnixTimeStampToDateTime((int) data.creationDate);
-                    bool keepGoing2 = false;
-                    do
-                    {
-                        keepGoing2 = false;
-                        tempdt = tempdt.AddMonths(1);
-                        if (tempdt < DateTime.UtcNow)
-                            keepGoing2 = true;
-                    } while (keepGoing2);
-                    
-                    SchedulerItem si = new SchedulerItem("CLASSBILL", temper.ToString(), true,
-                                                         new TimeSpan(0, 0, Util.ToUnixTime(tempdt) - Util.ToUnixTime(DateTime.UtcNow)));
+                    SchedulerItem si = new SchedulerItem("CLASSBILL", OSDParser.SerializeJsonString(new BillingClassified(data.classifiedID).ToOSD()), false,
+                                                         UnixTimeStampToDateTime((int)data.creationDate), 1,
+                                                         RepeatType.months) { id = data.classifiedID.ToString() };
                     m_scheduler.Save(si);
                 }
+#else
+                foreach (SchedulerItem si in from data in classifieds
+                                             where !m_scheduler.Exist(data.classifiedID.ToString())
+                                             select new SchedulerItem("CLASSBILL", OSDParser.SerializeJsonString(new BillingClassified(data.classifiedID).ToOSD()), false,
+                                                                      UnixTimeStampToDateTime((int)data.creationDate), 1,
+                                                                      RepeatType.months) { id = data.classifiedID.ToString() })
+                {
+                    m_scheduler.Save(si);
+                }
+#endif
+
             } while (keepGoing);
-
-            
-            
-        }
-
-        public void FinishedStartup()
-        {
-            
         }
 
         #endregion
@@ -152,6 +154,51 @@ namespace StarDust.Collections
             dtDateTime = dtDateTime.AddSeconds(unixTimeStamp).ToLocalTime();
             return dtDateTime;
         }
+        #endregion
+    }
+
+    public class BillingClassified : IDataTransferable
+    {
+        #region initializer
+        public BillingClassified(UUID classifiedID)
+        {
+            ClassifiedID = classifiedID;
+        }
+
+        public BillingClassified()
+        {
+        }
+
+        #endregion
+        
+
+        #region IDataTransferable
+        /// <summary>
+        ///   Serialize the module to OSD
+        /// </summary>
+        /// <returns></returns>
+        public override OSDMap ToOSD()
+        {
+            return new OSDMap()
+                       {
+                           {"ClassifiedID", OSD.FromUUID(ClassifiedID)}
+                       };
+        }
+
+        /// <summary>
+        ///   Deserialize the module from OSD
+        /// </summary>
+        /// <param name = "map"></param>
+        public override void FromOSD(OSDMap map)
+        {
+            ClassifiedID = map["ClassifiedID"].AsUUID();
+        }
+        #endregion
+
+        #region properties
+
+        public UUID ClassifiedID { get; set; }
+
         #endregion
     }
 }
