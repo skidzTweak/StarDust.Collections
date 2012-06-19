@@ -13,7 +13,8 @@ namespace StarDust.Currency.Grid.Dust
             Version = new Version(0, 0, 0);
             MigrationName = "Collections";
 
-            schema = new List<Rec<string, ColumnDefinition[], IndexDefinition[]>>();
+            //schema = new List<Rec<string, ColumnDefinition[], IndexDefinition[]>>();
+            schema = new List<SchemaDefinition>();
 
             AddSchema("group_teir_donation", ColDefs(
                 ColDef("avatar_id", ColumnTypes.String36),
