@@ -10,6 +10,8 @@ more to come
 ---- How to Install ------
 --------------------------
 Copy the "addon-modules" folder to your Aurora Directory
-No ini files just yet.
+copy the ini file to your "AuroraServerConfiguration\Modules" folder
+Edit the ini file.
+
 
 It does require stardust to work right now.
